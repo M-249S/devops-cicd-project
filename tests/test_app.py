@@ -46,3 +46,4 @@ def test_404_not_found(client):
 def test_home_only_allows_get(client):
     response = client.post('/')
     assert response.status_code == 405
+
