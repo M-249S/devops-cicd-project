@@ -46,3 +46,24 @@ def test_404_not_found(client):
 def test_home_only_allows_get(client):
     response = client.post('/')
     assert response.status_code == 405
+
+
+def test_config_status_reports_missing_key(client, monkeypatch):
+    monkeypatch.delenv('API_KEY', raising=False)
+    response = client.get('/config-status')
+    assert response.status_code == 200
+    assert response.get_json() == {"api_key_configured": False}
+
+
+def test_config_status_reports_present_key(client, monkeypatch):
+    monkeypatch.setenv('API_KEY', 'dummy-value-for-testing-only')
+    response = client.get('/config-status')
+    assert response.status_code == 200
+    assert response.get_json() == {"api_key_configured": True}
+
+
+def test_config_status_never_leaks_key_value(client, monkeypatch):
+    secret_value = 'super-secret-value-must-not-appear'
+    monkeypatch.setenv('API_KEY', secret_value)
+    response = client.get('/config-status')
+    assert secret_value not in response.get_data(as_text=True)

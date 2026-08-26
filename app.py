@@ -14,6 +14,19 @@ def health():
     return jsonify({"status": "healthy"}), 200
 
 
+@app.route('/config-status')
+def config_status():
+    """
+    Demonstrates safe handling of secrets: confirms whether a required
+    secret is configured WITHOUT ever exposing its value in a response,
+    log, or error message.
+    """
+    api_key_configured = bool(os.environ.get('API_KEY'))
+    return jsonify({
+        "api_key_configured": api_key_configured
+    }), 200
+
+
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Not found"}), 404

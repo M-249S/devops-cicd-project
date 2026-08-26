@@ -70,6 +70,21 @@ jobs:
       - name: Run Bandit SAST scan
         run: bandit -r app.py -f screen --severity-level medium
 
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   dependency-scan:
     name: Dependency Scan (Trivy)
     runs-on: ubuntu-latest
@@ -90,7 +105,7 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [sast, dependency-scan]
+    needs: [sast, secret-scan, dependency-scan]
     permissions:
       contents: read
       packages: write
@@ -118,6 +133,20 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 1
           ignore-unfixed: true
+
+      - name: Smoke test secret injection (API_KEY from GitHub Secrets)
+        if: github.event_name == 'push'
+        run: |
+          docker run -d --name secret-smoke-test \
+            -p 5000:5000 \
+            -e API_KEY="${{ secrets.API_KEY }}" \
+            local-scan:latest
+          sleep 5
+          RESPONSE=$(curl -sf http://localhost:5000/config-status)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"api_key_configured":true' || \
+            (echo "API_KEY was not picked up by the container" && exit 1)
+          docker stop secret-smoke-test
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
