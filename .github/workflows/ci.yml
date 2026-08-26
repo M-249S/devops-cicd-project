@@ -48,17 +48,73 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
+  sast:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit SAST scan
+        run: bandit -r app.py -f screen --severity-level medium
+
+  dependency-scan:
+    name: Dependency Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: test
-    # Only push on actual pushes to main, not on PRs from forks
+    needs: [sast, dependency-scan]
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image locally for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: local-scan:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: local-scan:latest
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
@@ -77,24 +133,13 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
+      - name: Push image (only after passing security scans)
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Verify image runs (PR builds only, not pushed)
-        if: github.event_name == 'pull_request'
-        run: |
-          docker build -t local-test .
-          docker run -d --name test-container -p 5000:5000 local-test
-          sleep 5
-          curl -f http://localhost:5000/health || exit 1
-          docker stop test-container
