@@ -138,6 +138,8 @@ jobs:
         if: github.event_name == 'push'
         run: |
           docker run -d --name secret-smoke-test \
+            --read-only \
+            --tmpfs /tmp \
             -p 5000:5000 \
             -e API_KEY="${{ secrets.API_KEY }}" \
             local-scan:latest
@@ -146,6 +148,7 @@ jobs:
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"api_key_configured":true' || \
             (echo "API_KEY was not picked up by the container" && exit 1)
+          docker logs secret-smoke-test
           docker stop secret-smoke-test
 
       - name: Log in to GitHub Container Registry
