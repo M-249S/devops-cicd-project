@@ -1,0 +1,28 @@
+# Local monitoring stack. Not used in the CI/CD pipeline itself — this is
+# for running the app with real-time metrics visibility on your own machine.
+#
+# Usage:
+#   docker compose up --build
+#   App:        http://localhost:5000
+#   Prometheus: http://localhost:9090
+#   Metrics:    http://localhost:5000/metrics
+
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - API_KEY=local-dev-value
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - app

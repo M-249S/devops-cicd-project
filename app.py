@@ -1,6 +1,8 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 import os
+import time
 from itertools import count
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 app = Flask(__name__)
 
@@ -8,6 +10,43 @@ app = Flask(__name__)
 # restart — fine for demonstrating CRUD patterns, not meant for real data.
 _items = {}
 _id_counter = count(1)
+
+# --- Prometheus metrics ---------------------------------------------------
+# Standard RED-method metrics: Rate (via the counter), Errors (via status
+# label), Duration (via the histogram). This is the same pattern used to
+# monitor real production services.
+REQUEST_COUNT = Counter(
+    'http_requests_total',
+    'Total HTTP requests',
+    ['method', 'endpoint', 'status']
+)
+REQUEST_LATENCY = Histogram(
+    'http_request_duration_seconds',
+    'HTTP request latency in seconds',
+    ['method', 'endpoint']
+)
+
+
+@app.before_request
+def _start_timer():
+    request._start_time = time.time()
+
+
+@app.after_request
+def _record_metrics(response):
+    # /metrics itself is excluded so Prometheus scraping it doesn't
+    # pollute its own metrics.
+    if request.path != '/metrics':
+        endpoint = request.endpoint or 'unknown'
+        duration = time.time() - getattr(request, '_start_time', time.time())
+        REQUEST_LATENCY.labels(request.method, endpoint).observe(duration)
+        REQUEST_COUNT.labels(request.method, endpoint, response.status_code).inc()
+    return response
+
+
+@app.route('/metrics')
+def metrics():
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
 @app.route('/')
