@@ -31,8 +31,8 @@ Most beginner CI/CD demos stop at "build → test → deploy." This one adds the
 Client → Flask app (Gunicorn) → Docker container → GitHub Container Registry
 ```
 
-The app itself is intentionally simple (three endpoints) — the point of this
-project is the pipeline and the security posture around it, not the
+The app itself is intentionally simple — the point of this project is the
+pipeline, the security posture, and the observability around it, not the
 application logic.
 
 ## Endpoints
@@ -42,6 +42,16 @@ application logic.
 | `/`                 | GET    | Welcome message                                               |
 | `/health`           | GET    | Liveness check, used by the Docker `HEALTHCHECK`              |
 | `/config-status`    | GET    | Confirms whether `API_KEY` is configured, **without** ever revealing its value |
+| `/metrics`          | GET    | Prometheus metrics in text exposition format (excluded from its own counters) |
+| `/items`            | GET    | List all items                                                |
+| `/items`            | POST   | Create an item — `{"name": "..."}`, returns `201`             |
+| `/items/<id>`       | GET    | Fetch a single item, `404` if it doesn't exist                |
+| `/items/<id>`       | PUT    | Update an item's name, `400` on invalid body                  |
+| `/items/<id>`       | DELETE | Delete an item, returns `204`                                 |
+
+`/items` is an in-memory CRUD resource — it demonstrates input validation and
+correct HTTP status codes (`200`/`201`/`204`/`400`/`404`), not persistent
+storage.
 
 ## Tech stack
 
@@ -53,6 +63,7 @@ application logic.
 - **Vulnerability scanning**: [Trivy](https://trivy.dev/) (filesystem + image)
 - **Registry**: GitHub Container Registry (GHCR)
 - **Testing**: pytest
+- **Monitoring**: [prometheus_client](https://github.com/prometheus/client_python), Prometheus (via `docker-compose`)
 
 ## CI/CD pipeline
 
@@ -69,7 +80,7 @@ Lint ──▶ Test ──▶ ┌ SAST (Bandit)            ┐
 | Stage | Tool | What it checks |
 |---|---|---|
 | **Lint** | flake8 | Code style (PEP 8) |
-| **Test** | pytest | 10 unit tests covering all endpoints, error handling, and secret-safety |
+| **Test** | pytest | 29 unit tests covering all endpoints, CRUD validation, metrics, error handling, and secret-safety |
 | **SAST** | Bandit | Insecure code patterns in the application source |
 | **Secret Scan** | Gitleaks | Hardcoded credentials anywhere in the Git history |
 | **Dependency Scan** | Trivy (filesystem) | Known CVEs in Python dependencies and OS packages |
@@ -103,6 +114,39 @@ than the line of YAML:
 - **GHCR over Docker Hub.** No manually managed registry credentials —
   authentication uses the automatically scoped `GITHUB_TOKEN`, reducing the
   number of long-lived secrets in the project.
+
+## Monitoring
+
+The app exposes Prometheus-compatible metrics at `/metrics`, instrumented
+with the **RED method** — the same pattern used to monitor real production
+services:
+
+- **R**ate — `http_requests_total`, labeled by method, endpoint, and status
+- **E**rrors — visible via the `status` label on the same counter
+- **D**uration — `http_request_duration_seconds`, a histogram per endpoint
+
+`/metrics` is excluded from its own counters, so scraping it doesn't create
+a feedback loop in the data.
+
+A `docker-compose.yml` spins up the app alongside Prometheus, pre-configured
+to scrape it every 5 seconds:
+
+```bash
+docker compose up --build
+```
+
+- App: <http://localhost:5000>
+- Metrics: <http://localhost:5000/metrics>
+- Prometheus: <http://localhost:9090> (check **Status → Targets** — the
+  `devops-demo-app` job should show as `UP`)
+
+```bash
+docker compose down
+```
+
+The container keeps its security hardening (`read_only`, `tmpfs`) even in
+this local monitoring stack — observability doesn't come at the cost of the
+container's attack surface.
 
 ## Running locally
 
@@ -142,7 +186,10 @@ curl http://localhost:5000/health
 
 - Pin `trivy-action` to a commit SHA instead of `@master`
 - Pin the base image by digest, with Dependabot/Renovate to bump it
-- Terraform to provision the deployment target (EC2/ECS)
+- Connect the Terraform EC2 setup (built as a companion exercise —
+  provision/destroy verified against real AWS) to actually deploy this
+  container, instead of the two living as separate exercises
+- A Grafana dashboard on top of the existing Prometheus metrics
 - SBOM generation as a pipeline artifact
 
 ---
