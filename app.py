@@ -44,6 +44,23 @@ def _record_metrics(response):
     return response
 
 
+@app.after_request
+def _set_security_headers(response):
+    # Security headers added to every response (including errors), so the
+    # OWASP ZAP baseline scan in CI can verify them as a gate.
+    # Stop browsers from guessing content types (ZAP rule 10021)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Block other origins from loading this API's responses (ZAP rule 90004)
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+    # Do not let shared caches keep responses (ZAP rule 10049)
+    response.headers['Cache-Control'] = 'no-store'
+    # Defense in depth for an API that never serves HTML (rules 10020, 10038, 10063)
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'"
+    response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    return response
+
+
 @app.route('/metrics')
 def metrics():
     return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)

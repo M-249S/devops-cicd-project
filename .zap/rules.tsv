@@ -1,6 +1,10 @@
-# ZAP baseline rules. Columns separated by a TAB: rule-id, action (IGNORE|WARN|FAIL), comment
-# Phase 1: WARN only. After adding security headers in Flask, change WARN to FAIL.
-10021	WARN	(X-Content-Type-Options Header Missing)
-10020	WARN	(Missing Anti-clickjacking Header)
-10038	WARN	(Content Security Policy Header Not Set)
-10063	WARN	(Permissions Policy Header Not Set)
+# ZAP baseline rule configuration. Columns are separated by a TAB:
+# rule-id <TAB> action (IGNORE | WARN | FAIL) <TAB> optional comment
+#
+# Security headers are set by the Flask app, so these rules gate the pipeline.
+10021	FAIL	(X-Content-Type-Options Header Missing)
+90004	FAIL	(Cross-Origin-Resource-Policy Header Missing or Invalid)
+10049	FAIL	(Storable and Cacheable Content)
+10020	FAIL	(Missing Anti-clickjacking Header)
+10038	FAIL	(Content Security Policy Header Not Set)
+10063	FAIL	(Permissions Policy Header Not Set)
