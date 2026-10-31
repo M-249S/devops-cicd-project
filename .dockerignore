@@ -6,6 +6,16 @@ __pycache__/
 .git/
 .gitignore
 .env
+.env.example
 *.md
 .pytest_cache/
 .vscode/
+.github/
+.zap/
+monitoring/
+tests/
+docker-compose.yml
+requirements-dev.txt
+pytest.ini
+Dockerfile
+.dockerignore

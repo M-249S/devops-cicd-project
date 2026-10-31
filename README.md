@@ -89,10 +89,13 @@ A few choices worth calling out explicitly, since the reasoning matters more tha
 - **Secrets are runtime-only.** `API_KEY` is injected via `-e` at container start, sourced from GitHub Secrets in CI. It is never present in a Docker layer, so it can't be extracted from the image itself — only from a running container with the right access.
 - **Base image patched, not just pinned.** `apt-get upgrade` runs during the build to pull in OS-level CVE fixes (e.g. a HIGH-severity OpenSSL CVE found by Trivy during development, see commit history) that lag behind the upstream `python:3.12-slim` tag.
 - **Security headers on every response.** The app sets `X-Content-Type-Options: nosniff`, a restrictive `Content-Security-Policy`, `X-Frame-Options`, `Cross-Origin-Resource-Policy`, `Permissions-Policy`, and `Cache-Control: no-store`. Tests assert them, and ZAP rules set to FAIL gate the pipeline.
+- **The published image is the scanned image.** The image is built once, scanned with Trivy, smoke tested, and then pushed under its release tags. It is never rebuilt between the scan and the publish.
+- **Least-privilege workflow token.** The token is read-only by default, and only the publish job is allowed to write packages. Checkouts do not keep credentials.
+- **One gunicorn worker on purpose.** The items store and the Prometheus metrics live in process memory, so several workers would each hold their own copy and a created item could be missing on the next request. The container runs one worker with four threads, and a smoke test in CI fails if state is not shared across requests.
 - **One ZAP rule is ignored on purpose.** Rule 10049 reports non-storable content as an informational alert. `no-store` makes responses non-storable intentionally.
 - **The DAST stage was verified to fail closed.** A run where the ZAP stage failed skipped the build and push stage, so no image was published.
 - **The ZAP baseline scan has limited reach.** It crawls links, and on this API it reached only the root path and `/sitemap.xml`. It is a baseline, not full API testing.
-- **`trivy-action` is currently pinned to `@master`, not a released tag.** This is a known trade-off, not an oversight — see the TODO in `ci.yml`. Pinning to a commit SHA is the more correct approach for supply-chain security and is the next planned improvement.
+- **Every GitHub Action is pinned to a full commit SHA, not a tag or branch, and the OWASP ZAP image and the Docker base image are pinned by digest.** In March 2026, almost all version tags of `trivy-action` were force-pushed to malicious code (GHSA-69fq-xp46-6x23); only v0.35.0 stayed safe, and that is the commit this pipeline uses. Tags and branches can be moved, a commit SHA cannot. Dependabot opens pull requests to update the pins, and each one is reviewed before it is merged.
 - **GHCR over Docker Hub.** No manually managed registry credentials — authentication uses the automatically scoped `GITHUB_TOKEN`, reducing the number of long-lived secrets in the project.
 
 ## Monitoring
@@ -154,8 +157,6 @@ curl http://localhost:5000/health
 
 ## What I'd add next
 
-- Pin `trivy-action` and other actions to a commit SHA instead of `@master` or a tag
-- Pin the base image by digest, with Dependabot/Renovate to bump it
 - Switch the DAST stage to the ZAP API scan with an OpenAPI description, for deeper endpoint coverage
 - A Grafana dashboard on top of the existing Prometheus metrics
 - SBOM generation as a pipeline artifact

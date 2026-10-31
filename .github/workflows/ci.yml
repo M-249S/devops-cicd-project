@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -23,14 +26,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
-      - name: Install flake8
-        run: pip install flake8
+      - name: Install dev tools (pinned in requirements-dev.txt)
+        run: pip install -r requirements-dev.txt
 
       - name: Run flake8
         run: flake8 app.py tests/ --max-line-length=100 --extend-ignore=E501
@@ -42,6 +47,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -61,14 +68,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
-      - name: Install Bandit
-        run: pip install bandit
+      - name: Install dev tools (pinned in requirements-dev.txt)
+        run: pip install -r requirements-dev.txt
 
       - name: Run Bandit SAST scan
         run: bandit -r app.py -f screen --severity-level medium
@@ -77,11 +86,15 @@ jobs:
     name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -95,6 +108,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Run Trivy vulnerability scanner (filesystem)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
@@ -114,6 +129,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -156,7 +173,7 @@ jobs:
           chmod -R a+rw zap-out
           docker run --rm --network host \
             -v "$PWD/zap-out:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:stable \
+            ghcr.io/zaproxy/zaproxy:2.17.0 \
             zap-baseline.py \
               -t http://localhost:5000 \
               -c rules.tsv \
@@ -185,10 +202,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      # The image is built once. The same image is scanned, smoke tested, and
+      # then pushed, so what is published is exactly what was checked.
       - name: Build image locally for scanning
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
@@ -196,6 +226,7 @@ jobs:
           push: false
           load: true
           tags: local-scan:latest
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -209,18 +240,29 @@ jobs:
 
       - name: Smoke test secret injection (API_KEY from GitHub Secrets)
         if: github.event_name == 'push'
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
           docker run -d --name secret-smoke-test \
             --read-only \
             --tmpfs /tmp \
             -p 5000:5000 \
-            -e API_KEY="${{ secrets.API_KEY }}" \
+            -e API_KEY \
             local-scan:latest
           sleep 5
           RESPONSE=$(curl -sf http://localhost:5000/config-status)
           echo "Response: $RESPONSE"
           echo "$RESPONSE" | grep -q '"api_key_configured":true' || \
             (echo "API_KEY was not picked up by the container" && exit 1)
+          # The in-memory store must behave the same on every request. This
+          # fails if the container is ever run with more than one worker.
+          curl -sf -X POST http://localhost:5000/items \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"smoke"}' > /dev/null
+          for i in 1 2 3 4 5 6 7 8; do
+            curl -sf http://localhost:5000/items/1 > /dev/null || \
+              (echo "In-memory state is not shared across requests" && exit 1)
+          done
           docker logs secret-smoke-test
           docker stop secret-smoke-test
 
@@ -232,22 +274,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
-
-      - name: Push image (only after passing security scans)
+      - name: Push the exact image that was scanned (only after passing security scans)
         if: github.event_name == 'push'
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            docker tag local-scan:latest "$tag"
+            docker push "$tag"
+          done

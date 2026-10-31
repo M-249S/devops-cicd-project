@@ -150,4 +150,6 @@ def delete_item(item_id):
 
 if __name__ == '__main__':
     debug_mode = os.environ.get('FLASK_DEBUG', 'False') == 'True'
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode)  # nosec B104 - intentional: must bind all interfaces inside Docker container for port mapping to work
+    # Binding to all interfaces is intentional: inside a Docker container the
+    # app must listen on 0.0.0.0 for port mapping to work.
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)  # nosec B104

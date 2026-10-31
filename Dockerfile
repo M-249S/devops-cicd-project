@@ -1,4 +1,5 @@
-FROM python:3.12-slim AS base
+# Pinned by digest. Dependabot proposes a new digest when the tag moves.
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS base
 
 # Prevent Python from writing .pyc files and buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,4 +29,8 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--worker-tmp-dir", "/dev/shm", "app:app"]
+# One worker process on purpose: the items store and the Prometheus metrics
+# live in process memory, so several workers would each hold their own copy
+# (an item created through one worker would be missing on the other).
+# Threads give concurrency without splitting that state.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "app:app"]
